@@ -1,7 +1,7 @@
 name: label-issues-when-referenced-by-pr
 on:
   pull_request:
-    types: [opened, edited, synchronize]
+    types: [opened, edited, synchronize, reopened, closed]
   issue_comment:
     types: [created]
 
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   label-from-pr:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Extract referenced issues & label them
@@ -33,9 +33,10 @@ jobs:
               const [o,r,num] = ref.replace('#','/').split('/');
               await github.rest.issues.addLabels({
                 owner: o, repo: r, issue_number: Number(num),
-                labels: ['pr-crossref']
+                labels: ['has-pr']
               });
             }
+
   label-from-pr-comment:
     if: github.event_name == 'issue_comment' && !!github.event.issue.pull_request
     runs-on: ubuntu-latest
@@ -58,6 +59,66 @@ jobs:
               const [o,r,num] = ref.replace('#','/').split('/');
               await github.rest.issues.addLabels({
                 owner: o, repo: r, issue_number: Number(num),
-                labels: ['pr-crossref']
+                labels: ['has-pr']
               });
+            }
+
+  remove-on-pr-closed-unmerged:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && !github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove label from issues referenced by PR (body + PR comments)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const pr    = context.payload.pull_request;
+            const prNumber = pr.number;
+
+            // Collect refs from PR title/body
+            const texts = [`${pr.title}\n\n${pr.body || ""}`];
+
+            // Also collect PR "issue comments" (the conversation tab)
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: prNumber, per_page: 100 }
+            );
+            for (const c of comments) texts.push(c.body || "");
+
+            // (Optional) Collect PR review comments too
+            const reviewComments = await github.paginate(
+              github.rest.pulls.listReviewComments,
+              { owner, repo, pull_number: prNumber, per_page: 100 }
+            );
+            for (const rc of reviewComments) texts.push(rc.body || "");
+
+            // Extract refs
+            const refs = new Set();
+            for (const text of texts) {
+              for (const m of (text || "").matchAll(/(^|\s)#(\d+)\b/g)) {
+                refs.add(`${owner}/${repo}#${m[2]}`);
+              }
+              for (const m of (text || "").matchAll(/\b([\w.-]+)\/([\w.-]+)#(\d+)\b/g)) {
+                refs.add(`${m[1]}/${m[2]}#${m[3]}`);
+              }
+            }
+
+            // Remove label if present
+            const LABEL = 'pr-crossref';
+            for (const ref of refs) {
+              const [o, r, num] = ref.replace('#','/').split('/');
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: o,
+                  repo: r,
+                  issue_number: Number(num),
+                  name: LABEL
+                });
+              } catch (e) {
+                // Ignore if label not present (404) or other non-fatal errors
+                if (e.status !== 404) {
+                  core.warning(`Failed removing label from ${o}/${r}#${num}: ${e.message}`);
+                }
+              }
             }
