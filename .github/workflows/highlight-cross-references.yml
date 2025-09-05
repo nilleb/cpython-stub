@@ -105,7 +105,7 @@ jobs:
             }
 
             // Remove label if present
-            const LABEL = 'pr-crossref';
+            const LABEL = 'has-pr';
             for (const ref of refs) {
               const [o, r, num] = ref.replace('#','/').split('/');
               try {
