@@ -49,6 +49,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const title = context.payload.pull_request.title || "";
             const body = context.payload.comment.body || "";
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
@@ -58,6 +59,9 @@ jobs:
             for (const m of local) refs.add(`${owner}/${repo}#${m[2]}`);
             const cross = body.matchAll(/\b([\w.-]+)\/([\w.-]+)#(\d+)\b/g);
             for (const m of cross) refs.add(`${m[1]}/${m[2]}#${m[3]}`);
+
+            const titleRefs = title.matchAll(/gh-([0-9]+)/g)
+            for (const m of titleRefs) refs.add(`${owner}/${repo}#${m[1]}`);
 
             for (const ref of refs) {
               const [o,r,num] = ref.replace('#','/').split('/');
